@@ -447,6 +447,274 @@ class FlyingChairsDataset(BaseFlowDataset):
 
         self._log_status()
 
+class CVPRDataset(BaseFlowDataset):
+    """Handle the CVPR dataset with burst captures and optical flow files."""
+
+    def __init__(
+        self,
+        root_dir: str = "/data/TrainingDatasets/CVPR2024/train_real",
+        transform: Callable[[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]] = None,
+        max_flow: float = 10000.0,
+        get_valid_mask: bool = True,
+        get_meta: bool = True
+    ) -> None:
+        """
+        Initialize CVPRDataset.
+
+        Parameters
+        ----------
+        root_dir : str
+            Path to the root directory of the CVPR dataset.
+        transform : Callable[[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]], optional
+            Transform to be applied on the inputs.
+        max_flow : float, default 10000.0
+            Maximum optical flow absolute value. Flow values above this are clipped.
+        get_valid_mask : bool, default True
+            Whether to generate valid masks based on flow value clipping.
+        """
+        self.root_dir = root_dir
+        self.transform = transform
+        self.max_flow = max_flow
+        self.get_valid_mask = get_valid_mask
+        self.get_meta = get_meta
+        self.dataset_name = "CVPRDataset_Real"
+        self.split_name = "train"
+
+        # Explore the dataset directory and prepare data paths
+        self.img_paths = []
+        self.flow_paths = []
+        print(self.root_dir, len(list(Path(self.root_dir).glob("*"))))
+        for subdir in Path(self.root_dir).glob("*"):
+            npz_files = list(subdir.glob("raw_*.npz"))
+            npz_files.sort()  # Ensure the files are in the correct order
+            
+            if len(npz_files) > 1:
+                # First file is the reference frame
+                # self.img_paths.append([npz_files[0], npz_files[1]])
+                # Corresponding flow files (skip the first one as it is the reference)
+                # self.flow_paths.append([subdir / f"flow_{i+2}.npz" for i in range(len(npz_files)-1)])
+                reference_frame = npz_files[0]
+                for idx in range(1, len(npz_files)):
+                    self.img_paths.append([reference_frame, npz_files[idx]])
+                    self.flow_paths.append([subdir / f"flow_{idx+1}.npz"])
+
+        print(len(self.img_paths), len(self.flow_paths))
+        assert len(self.img_paths) == len(self.flow_paths), f"{len(self.img_paths)} vs {len(self.flow_paths)}"
+        self.metadata = [
+            {
+                "image_paths": [str(p) for p in paths],
+                "is_val": False,
+                "misc": "",
+                "is_seq_start": True,
+            }
+            for paths in self.img_paths
+        ]
+
+    def __len__(self):
+        return len(self.img_paths)
+
+    def bayer_to_rgb(self, raw):
+        if len(raw.shape) == 3 and raw.shape[-1] == 1:
+            raw = raw[..., 0]
+        height, width = raw.shape
+        rgb = np.zeros((height//2, width//2, 3), dtype=raw.dtype)
+        rgb[:, :, 2] = raw[0::2, 0::2]  # Remember: OpenCV uses BGR by default, change indices for RGB
+        rgb[:, :, 1] = (raw[0::2, 1::2] + raw[1::2, 0::2]) / 2
+        rgb[:, :, 0] = raw[1::2, 1::2]
+    
+        return rgb
+
+    def process_raw(self, image_path):
+        raw = np.load(image_path)
+        img1 = raw["raw"]
+        img1_max = raw["max_val"]
+        img1 = (img1 / img1_max).astype(np.float32)
+        img1 = cv2.resize(img1, (512, 384))
+        return self.bayer_to_rgb(img1)
+        
+    def process_flow(self, flow_path):
+        flow = np.load(flow_path)["flow"]
+        flow = (flow.astype(np.float32)-2**15)/10
+        return cv2.resize(flow, (512, 384))
+
+        
+    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
+        # Load images
+        images = [self.process_raw(path) for path in self.img_paths[index]]
+
+        # Load flows
+        flows = [self.process_flow(path) for path in self.flow_paths[index]]
+        
+        # Create a valid mask based on the max flow value
+        # if self.get_valid_mask:
+        #     valids = [np.linalg.norm(flow, axis=-1) < self.max_flow for flow in flows]
+        
+        # Package data
+        data = {
+            'images': np.stack(images, axis=0),#, dtype=torch.float32),
+            'flows': np.stack(flows, axis=0)#, dtype=torch.float32)
+        }
+
+        valids_list = []
+        if self.get_valid_mask:
+            for item in flows:
+                # data['valids'] = np.stack(valids, axis=0)#, dtype=torch.bool)
+                valids = (np.abs(item) < self.max_flow).astype(np.uint8) * 255
+                valids = np.minimum(valids[:, :, 0], valids[:, :, 1])
+                valids_list.append(valids[:, :, None])
+
+            data["valids"] = valids_list
+
+        # Apply transform, if any
+        if self.transform:
+            data = self.transform(data)
+
+        if self.get_meta:
+            data["meta"] = {
+                "dataset_name": self.dataset_name,
+                "split_name": self.split_name,
+            }
+            if index < len(self.metadata):
+                data["meta"].update(self.metadata[index])
+
+        return data
+
+
+class ECCVDataset(BaseFlowDataset):
+    """Handle the ECCV Synthetic dataset with burst captures and optical flow files."""
+
+    def __init__(
+        self,
+        root_dir: str = "/data/TrainingDatasets/ECCV2024/train_synth",
+        transform: Callable[[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]] = None,
+        max_flow: float = 10000.0,
+        get_valid_mask: bool = True,
+        get_meta: bool = True
+    ) -> None:
+        """
+        Initialize ECCVDataset.
+
+        Parameters
+        ----------
+        root_dir : str
+            Path to the root directory of the CVPR dataset.
+        transform : Callable[[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]], optional
+            Transform to be applied on the inputs.
+        max_flow : float, default 10000.0
+            Maximum optical flow absolute value. Flow values above this are clipped.
+        get_valid_mask : bool, default True
+            Whether to generate valid masks based on flow value clipping.
+        """
+        self.root_dir = root_dir
+        self.transform = transform
+        self.max_flow = max_flow
+        self.get_valid_mask = get_valid_mask
+        self.get_meta = get_meta
+        self.dataset_name = "ECCVDataset_Synth"
+        self.split_name = "train"
+
+        # Explore the dataset directory and prepare data paths
+        self.img_paths = []
+        self.flow_paths = []
+        print(self.root_dir, len(list(Path(self.root_dir).glob("*"))))
+        for subdir in Path(self.root_dir).glob("*"):
+            npz_files = list(subdir.glob("raw_*.npz"))
+            npz_files.sort()  # Ensure the files are in the correct order
+            
+            if len(npz_files) > 1:
+                # First file is the reference frame
+                # self.img_paths.append([npz_files[0], npz_files[1]])
+                # Corresponding flow files (skip the first one as it is the reference)
+                # self.flow_paths.append([subdir / f"flow_{i+2}.npz" for i in range(len(npz_files)-1)])
+                reference_frame = npz_files[0]
+                for idx in range(1, len(npz_files)):
+                    self.img_paths.append([reference_frame, npz_files[idx]])
+                    self.flow_paths.append([subdir / f"flow_{idx+1}.npz"])
+
+        print(len(self.img_paths), len(self.flow_paths))
+        assert len(self.img_paths) == len(self.flow_paths), f"{len(self.img_paths)} vs {len(self.flow_paths)}"
+        self.metadata = [
+            {
+                "image_paths": [str(p) for p in paths],
+                "is_val": False,
+                "misc": "",
+                "is_seq_start": True,
+            }
+            for paths in self.img_paths
+        ]
+
+    def __len__(self):
+        return len(self.img_paths)
+
+    def bayer_to_rgb(self, raw):
+        if len(raw.shape) == 3 and raw.shape[-1] == 1:
+            raw = raw[..., 0]
+        height, width = raw.shape
+        rgb = np.zeros((height//2, width//2, 3), dtype=raw.dtype)
+        rgb[:, :, 2] = raw[0::2, 0::2]  # Remember: OpenCV uses BGR by default, change indices for RGB
+        rgb[:, :, 1] = (raw[0::2, 1::2] + raw[1::2, 0::2]) / 2
+        rgb[:, :, 0] = raw[1::2, 1::2]
+    
+        return rgb
+
+    def process_raw(self, image_path):
+        raw = np.load(image_path)
+        img1 = raw["raw"]
+        # img1 = (img1 / img1.max()).astype(np.float32) # modify if needed
+        # img1 = cv2.resize(img1, (512, 384)) # resize if needed
+        # img1 = self.bayer_to_rgb(img1) # train with rgb images
+        return img1
+        
+    def process_flow(self, flow_path):
+        flow_npz = np.load(flow_path)
+        flow_x = flow_npz["flow_x"]
+        flow_y = flow_npz["flow_y"]
+        flow = np.stack([flow_x, flow_y], axis=-1) # change if you need flow_y, flow_x
+        flow = (flow.astype(np.float32)-2**15)/10
+        # flow = cv2.resize(flow, (512, 384)) # resize if needed
+        return flow
+        
+    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
+        # Load images
+        images = [self.process_raw(path) for path in self.img_paths[index]]
+
+        # Load flows
+        flows = [self.process_flow(path) for path in self.flow_paths[index]]
+        
+        # Create a valid mask based on the max flow value
+        # if self.get_valid_mask:
+        #     valids = [np.linalg.norm(flow, axis=-1) < self.max_flow for flow in flows]
+        
+        # Package data
+        data = {
+            'images': np.stack(images, axis=0),#, dtype=torch.float32),
+            'flows': np.stack(flows, axis=0)#, dtype=torch.float32)
+        }
+
+        valids_list = []
+        if self.get_valid_mask:
+            for item in flows:
+                # data['valids'] = np.stack(valids, axis=0)#, dtype=torch.bool)
+                valids = (np.abs(item) < self.max_flow).astype(np.uint8) * 255
+                valids = np.minimum(valids[:, :, 0], valids[:, :, 1])
+                valids_list.append(valids[:, :, None])
+
+            data["valids"] = valids_list
+
+        # Apply transform, if any
+        if self.transform:
+            data = self.transform(data)
+
+        if self.get_meta:
+            data["meta"] = {
+                "dataset_name": self.dataset_name,
+                "split_name": self.split_name,
+            }
+            if index < len(self.metadata):
+                data["meta"].update(self.metadata[index])
+
+        return data
+
 
 class FlyingChairs2Dataset(BaseFlowDataset):
     """Handle the FlyingChairs 2 dataset."""

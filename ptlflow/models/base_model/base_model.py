@@ -37,7 +37,9 @@ from torch.utils.data import DataLoader, Dataset
 from ptlflow.data import flow_transforms as ft
 from ptlflow.data.datasets import (
     AutoFlowDataset,
-    FlyingChairsDataset,
+    CVPRDataset,
+    ECCVDataset,
+	FlyingChairsDataset,
     FlyingChairs2Dataset,
     Hd1kDataset,
     KittiDataset,
@@ -170,7 +172,7 @@ class BaseModel(pl.LightningModule):
             ),
         )
         parser.add_argument(
-            "--train_crop_size", type=int, nargs=2, default=None, help=""
+            "--train_crop_size", type=int, nargs=2, default=[384, 512], help=""
         )
         parser.add_argument(
             "--val_dataset",
@@ -847,7 +849,7 @@ class BaseModel(pl.LightningModule):
     # _get_datasets
     ###########################################################################
 
-    def _get_autoflow_dataset(self, is_train: bool, *args: str) -> Dataset:
+    def _get_cvpr24synth_dataset(self, is_train: bool, *args: str, **kwargs: str):
         device = "cuda" if self.args.train_transform_cuda else "cpu"
         md = make_divisible
 
@@ -887,12 +889,12 @@ class BaseModel(pl.LightningModule):
         split = "trainval"
         if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
             split = args[0]
-        dataset = AutoFlowDataset(
-            self.args.autoflow_root_dir, split=split, transform=transform
+        dataset = CVPRDataset(
+            self.args.cvpr24synth_root_dir, transform=transform
         )
         return dataset
-
-    def _get_chairs_dataset(self, is_train: bool, *args: str) -> Dataset:
+        
+    def _get_cvpr24real_dataset(self, is_train: bool, *args: str, **kwargs: str):
         device = "cuda" if self.args.train_transform_cuda else "cpu"
         md = make_divisible
 
@@ -932,12 +934,12 @@ class BaseModel(pl.LightningModule):
         split = "trainval"
         if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
             split = args[0]
-        dataset = FlyingChairsDataset(
-            self.args.flying_chairs_root_dir, split=split, transform=transform
+        dataset = CVPRDataset(
+            self.args.cvpr24real_root_dir, transform=transform
         )
         return dataset
 
-    def _get_chairs2_dataset(self, is_train: bool, *args: str) -> Dataset:
+    def _get_eccv24synth_dataset(self, is_train: bool, *args: str, **kwargs: str):
         device = "cuda" if self.args.train_transform_cuda else "cpu"
         md = make_divisible
 
@@ -975,411 +977,9 @@ class BaseModel(pl.LightningModule):
             transform = ft.ToTensor()
 
         split = "trainval"
-        add_reverse = False
-        get_occlusion_mask = False
-        get_motion_boundary_mask = False
-        get_backward = False
-        for v in args:
-            if v in ["train", "val", "trainval"]:
-                split = v
-            elif v == "rev":
-                add_reverse = True
-            elif v == "occ":
-                get_occlusion_mask = True
-            elif v == "mb":
-                get_motion_boundary_mask = True
-            elif v == "back":
-                get_backward = True
-
-        dataset = FlyingChairs2Dataset(
-            self.args.flying_chairs2_root_dir,
-            split=split,
-            transform=transform,
-            add_reverse=add_reverse,
-            get_occlusion_mask=get_occlusion_mask,
-            get_motion_boundary_mask=get_motion_boundary_mask,
-            get_backward=get_backward,
+        if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
+            split = args[0]
+        dataset = ECCVDataset(
+            self.args.eccv24synth_root_dir, transform=transform
         )
-        return dataset
-
-    def _get_hd1k_dataset(self, is_train: bool, *args: str) -> Dataset:
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(368, self.output_stride), md(768, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop(
-                        (cy, cx), (-0.5, 0.2), (-0.2, 0.2), sparse=True
-                    ),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        split = "trainval"
-        sequence_length = 2
-        sequence_position = "first"
-        for v in args:
-            if v in ["train", "val", "trainval", "test"]:
-                split = args[0]
-            elif v.startswith("seqlen"):
-                sequence_length = int(v.split("_")[1])
-            elif v.startswith("seqpos"):
-                sequence_position = v.split("_")[1]
-
-        dataset = Hd1kDataset(
-            self.args.hd1k_root_dir,
-            split=split,
-            transform=transform,
-            sequence_length=sequence_length,
-            sequence_position=sequence_position,
-        )
-        return dataset
-
-    def _get_kitti_dataset(self, is_train: bool, *args: str) -> Dataset:
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(288, self.output_stride), md(960, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop(
-                        (cy, cx), (-0.2, 0.4), (-0.2, 0.2), sparse=True
-                    ),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        versions = ["2012", "2015"]
-        split = "trainval"
-        for v in args:
-            if v in ["2012", "2015"]:
-                versions = [v]
-            elif v in ["train", "val", "trainval", "test"]:
-                split = v
-
-        dataset = KittiDataset(
-            self.args.kitti_2012_root_dir,
-            self.args.kitti_2015_root_dir,
-            versions=versions,
-            split=split,
-            transform=transform,
-        )
-        return dataset
-
-    def _get_sintel_dataset(self, is_train: bool, *args: str) -> Dataset:
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(368, self.output_stride), md(768, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop((cy, cx), (-0.2, 0.6), (-0.2, 0.2)),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        pass_names = ["clean", "final"]
-        split = "trainval"
-        get_occlusion_mask = False
-        sequence_length = 2
-        sequence_position = "first"
-        for v in args:
-            if v in ["clean", "final"]:
-                pass_names = [v]
-            elif v in ["train", "val", "trainval", "test"]:
-                split = v
-            elif v == "occ":
-                get_occlusion_mask = True
-            elif v.startswith("seqlen"):
-                sequence_length = int(v.split("_")[1])
-            elif v.startswith("seqpos"):
-                sequence_position = v.split("_")[1]
-
-        dataset = SintelDataset(
-            self.args.mpi_sintel_root_dir,
-            split=split,
-            pass_names=pass_names,
-            transform=transform,
-            get_occlusion_mask=get_occlusion_mask,
-            sequence_length=sequence_length,
-            sequence_position=sequence_position,
-        )
-        return dataset
-
-    def _get_spring_dataset(self, is_train: bool, *args: str) -> Dataset:
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(368, self.output_stride), md(768, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # Transforms copied from Sintel config
-            # Untested! Not sure if they are optimal!
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop((cy, cx), (-0.2, 0.6), (-0.2, 0.2)),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        split = "train"
-        add_reverse = False
-        get_backward = False
-        sequence_length = 2
-        sequence_position = "first"
-        reverse_only = False
-        for v in args:
-            if v in ["train", "val", "trainval", "test"]:
-                split = v
-            elif v == "rev":
-                add_reverse = True
-            elif v == "revonly":
-                reverse_only = True
-            elif v == "back":
-                get_backward = True
-            elif v.startswith("seqlen"):
-                sequence_length = int(v.split("_")[1])
-            elif v.startswith("seqpos"):
-                sequence_position = v.split("_")[1]
-
-        dataset = SpringDataset(
-            self.args.spring_root_dir,
-            split=split,
-            side_names=["left", "right"],
-            add_reverse=add_reverse,
-            transform=transform,
-            get_backward=get_backward,
-            sequence_length=sequence_length,
-            sequence_position=sequence_position,
-            reverse_only=reverse_only,
-        )
-        return dataset
-
-    def _get_things_dataset(self, is_train: bool, *args: str) -> Dataset:
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        pass_names = ["clean", "final"]
-        split = "trainval"
-        is_subset = False
-        add_reverse = False
-        get_occlusion_mask = False
-        get_motion_boundary_mask = False
-        get_backward = False
-        sequence_length = 2
-        sequence_position = "first"
-        sintel_transform = False
-        for v in args:
-            if v in ["clean", "final"]:
-                pass_names = [v]
-            elif v in ["train", "val", "trainval"]:
-                split = v
-            elif v == "subset":
-                is_subset = True
-            elif v == "rev":
-                add_reverse = True
-            elif v == "occ":
-                get_occlusion_mask = True
-            elif v == "mb":
-                get_motion_boundary_mask = True
-            elif v == "back":
-                get_backward = True
-            elif v.startswith("seqlen"):
-                sequence_length = int(v.split("_")[1])
-            elif v.startswith("seqpos"):
-                sequence_position = v.split("_")[1]
-            elif v == "sinteltransform":
-                sintel_transform = True
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(400, self.output_stride), md(720, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
-            if sintel_transform:
-                major_scale = (-0.2, 0.6)
-            else:
-                major_scale = (-0.4, 0.8)
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop((cy, cx), major_scale, (-0.2, 0.2)),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        if is_subset:
-            dataset = FlyingThings3DSubsetDataset(
-                self.args.flying_things3d_subset_root_dir,
-                split=split,
-                pass_names=pass_names,
-                side_names=["left", "right"],
-                add_reverse=add_reverse,
-                transform=transform,
-                get_occlusion_mask=get_occlusion_mask,
-                get_motion_boundary_mask=get_motion_boundary_mask,
-                get_backward=get_backward,
-                sequence_length=sequence_length,
-                sequence_position=sequence_position,
-            )
-        else:
-            dataset = FlyingThings3DDataset(
-                self.args.flying_things3d_root_dir,
-                split=split,
-                pass_names=pass_names,
-                side_names=["left", "right"],
-                add_reverse=add_reverse,
-                transform=transform,
-                get_occlusion_mask=get_occlusion_mask,
-                get_motion_boundary_mask=get_motion_boundary_mask,
-                get_backward=get_backward,
-                sequence_length=sequence_length,
-                sequence_position=sequence_position,
-            )
-        return dataset
-
-    def _get_overfit_dataset(self, is_train: bool, *args: str) -> Dataset:
-        md = make_divisible
-        if self.args.train_crop_size is None:
-            cy, cx = (md(436, self.output_stride), md(1024, self.output_stride))
-            self.args.train_crop_size = (cy, cx)
-            logging.warning(
-                "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-            )
-        else:
-            cy, cx = (
-                md(self.args.train_crop_size[0], self.output_stride),
-                md(self.args.train_crop_size[1], self.output_stride),
-            )
-        transform = ft.Compose([ft.ToTensor(), ft.Resize((cy, cx))])
-
-        dataset_name = "sintel"
-        if len(args) > 0 and args[0] in ["chairs2"]:
-            dataset_name = args[0]
-
-        if dataset_name == "sintel":
-            dataset = SintelDataset(
-                self.args.mpi_sintel_root_dir,
-                split="trainval",
-                pass_names="clean",
-                transform=transform,
-                get_occlusion_mask=False,
-            )
-        elif dataset_name == "chairs2":
-            dataset = FlyingChairs2Dataset(
-                self.args.flying_chairs2_root_dir,
-                split="trainval",
-                transform=transform,
-                add_reverse=False,
-                get_occlusion_mask=True,
-                get_motion_boundary_mask=True,
-                get_backward=True,
-            )
-
-        dataset.img_paths = dataset.img_paths[:1]
-        dataset.flow_paths = dataset.flow_paths[:1]
-        dataset.occ_paths = dataset.occ_paths[:1]
-        dataset.mb_paths = dataset.mb_paths[:1]
-        dataset.flow_b_paths = dataset.flow_b_paths[:1]
-        dataset.occ_b_paths = dataset.occ_b_paths[:1]
-        dataset.mb_b_paths = dataset.mb_b_paths[:1]
-        dataset.metadata = dataset.metadata[:1]
-
         return dataset

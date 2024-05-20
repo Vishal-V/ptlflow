@@ -1,9 +1,3 @@
-autoflow: /path/to/autoflow
-flying_chairs: /path/to/FlyingChairs_release
-flying_chairs2: /path/to/FlyingChairs2
-flying_things3d: /path/to/FlyingThings3D
-flying_things3d_subset: /path/to/FlyingThings3D_subset
-mpi_sintel: /path/to/MPI-Sintel
-kitti_2012: /path/to/KITTI/2012
-kitti_2015: /path/to/KITTI/2015
-hd1k: /path/to/HD1K
+eccv24synth: /path/to/eccv24synthdataset
+cvpr24synth: /path/to/cvpr24synthdataset # delete this line if the dataset is not available
+cvpr24real: /path/to/cvpr24realdataset # delete this line if the dataset is not available
