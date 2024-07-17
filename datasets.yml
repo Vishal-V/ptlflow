@@ -1,3 +1,2 @@
-eccv24synth: /path/to/eccv24synthdataset
-cvpr24synth: /path/to/cvpr24synthdataset # delete this line if the dataset is not available
-cvpr24real: /path/to/cvpr24realdataset # delete this line if the dataset is not available
+eccv24synth: /path/to/synth/data
+eccv24real: /path/to/real/data

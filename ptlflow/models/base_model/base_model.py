@@ -35,19 +35,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
 from ptlflow.data import flow_transforms as ft
-from ptlflow.data.datasets import (
-    AutoFlowDataset,
-    CVPRDataset,
-    ECCVDataset,
-	FlyingChairsDataset,
-    FlyingChairs2Dataset,
-    Hd1kDataset,
-    KittiDataset,
-    SintelDataset,
-    FlyingThings3DDataset,
-    FlyingThings3DSubsetDataset,
-    SpringDataset,
-)
+from ptlflow.data.datasets import ECCVDataset
 from ptlflow.utils.utils import InputPadder, InputScaler
 from ptlflow.utils.utils import config_logging, make_divisible, bgr_val_as_tensor
 from ptlflow.utils.flow_metrics import FlowMetrics
@@ -849,96 +837,6 @@ class BaseModel(pl.LightningModule):
     # _get_datasets
     ###########################################################################
 
-    def _get_cvpr24synth_dataset(self, is_train: bool, *args: str, **kwargs: str):
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(368, self.output_stride), md(496, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop(
-                        (cy, cx),
-                        (-0.1, 1.0),
-                        (-0.2, 0.2),
-                    ),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        split = "trainval"
-        if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
-            split = args[0]
-        dataset = CVPRDataset(
-            self.args.cvpr24synth_root_dir, transform=transform
-        )
-        return dataset
-        
-    def _get_cvpr24real_dataset(self, is_train: bool, *args: str, **kwargs: str):
-        device = "cuda" if self.args.train_transform_cuda else "cpu"
-        md = make_divisible
-
-        if is_train:
-            if self.args.train_crop_size is None:
-                cy, cx = (md(368, self.output_stride), md(496, self.output_stride))
-                self.args.train_crop_size = (cy, cx)
-                logging.warning(
-                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
-                )
-            else:
-                cy, cx = (
-                    md(self.args.train_crop_size[0], self.output_stride),
-                    md(self.args.train_crop_size[1], self.output_stride),
-                )
-
-            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
-            transform = ft.Compose(
-                [
-                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
-                    ft.RandomScaleAndCrop(
-                        (cy, cx),
-                        (-0.1, 1.0),
-                        (-0.2, 0.2),
-                    ),
-                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
-                    ft.GaussianNoise(0.02),
-                    ft.RandomPatchEraser(
-                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
-                    ),
-                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
-                ]
-            )
-        else:
-            transform = ft.ToTensor()
-
-        split = "trainval"
-        if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
-            split = args[0]
-        dataset = CVPRDataset(
-            self.args.cvpr24real_root_dir, transform=transform
-        )
-        return dataset
-
     def _get_eccv24synth_dataset(self, is_train: bool, *args: str, **kwargs: str):
         device = "cuda" if self.args.train_transform_cuda else "cpu"
         md = make_divisible
@@ -980,6 +878,51 @@ class BaseModel(pl.LightningModule):
         if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
             split = args[0]
         dataset = ECCVDataset(
-            self.args.eccv24synth_root_dir, transform=transform
+            self.args.eccv24synth_root_dir, transform=transform, dataset_name="ECCVDataset_Synth"
+        )
+        return dataset
+    
+    def _get_eccv24real_dataset(self, is_train: bool, *args: str, **kwargs: str):
+        device = "cuda" if self.args.train_transform_cuda else "cpu"
+        md = make_divisible
+
+        if is_train:
+            if self.args.train_crop_size is None:
+                cy, cx = (md(368, self.output_stride), md(496, self.output_stride))
+                self.args.train_crop_size = (cy, cx)
+                logging.warning(
+                    "--train_crop_size is not set. It will be set as (%d, %d).", cy, cx
+                )
+            else:
+                cy, cx = (
+                    md(self.args.train_crop_size[0], self.output_stride),
+                    md(self.args.train_crop_size[1], self.output_stride),
+                )
+
+            # These transforms are based on RAFT: https://github.com/princeton-vl/RAFT
+            transform = ft.Compose(
+                [
+                    ft.ToTensor(device=device, fp16=self.args.train_transform_fp16),
+                    ft.RandomScaleAndCrop(
+                        (cy, cx),
+                        (-0.1, 1.0),
+                        (-0.2, 0.2),
+                    ),
+                    ft.ColorJitter(0.4, 0.4, 0.4, 0.5 / 3.14, 0.2),
+                    ft.GaussianNoise(0.02),
+                    ft.RandomPatchEraser(
+                        0.5, (int(1), int(3)), (int(50), int(100)), "mean"
+                    ),
+                    ft.RandomFlip(min(0.5, 0.5), min(0.1, 0.5)),
+                ]
+            )
+        else:
+            transform = ft.ToTensor()
+
+        split = "trainval"
+        if len(args) > 0 and args[0] in ["train", "val", "trainval"]:
+            split = args[0]
+        dataset = ECCVDataset(
+            self.args.eccv24real_root_dir, transform=transform, dataset_name="ECCVDataset_Real"
         )
         return dataset
